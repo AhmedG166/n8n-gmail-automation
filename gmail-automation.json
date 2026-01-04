@@ -1,0 +1,193 @@
+{
+  "name": "Gmail to Sheets to Slack Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {
+          "labelIds": ["Label_123"],
+          "includeSpamTrash": false
+        },
+        "format": "resolved",
+        "options": {
+          "maxResults": 10
+        }
+      },
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "1",
+          "name": "Gmail Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "// Clean and format email data\nconst items = $input.all();\nconst processedItems = [];\n\nfor (const item of items) {\n  try {\n    // Extract email details\n    const sender = item.json.from || 'Unknown';\n    const subject = item.json.subject || 'No Subject';\n    const bodyText = item.json.textPlain || item.json.textHtml || '';\n    const timestamp = item.json.date || new Date().toISOString();\n    \n    // Clean body text - remove extra whitespace and HTML tags\n    let cleanBody = bodyText\n      .replace(/<[^>]*>/g, '') // Remove HTML tags\n      .replace(/\\s+/g, ' ') // Replace multiple spaces\n      .trim()\n      .substring(0, 500); // Limit to 500 chars\n    \n    // Format timestamp\n    const formattedDate = new Date(timestamp).toLocaleString('en-US', {\n      year: 'numeric',\n      month: '2-digit',\n      day: '2-digit',\n      hour: '2-digit',\n      minute: '2-digit',\n      timeZone: 'Africa/Cairo'\n    });\n    \n    // Extract sender email only\n    const emailMatch = sender.match(/<(.+?)>/);\n    const senderEmail = emailMatch ? emailMatch[1] : sender;\n    \n    // Extract sender name\n    const senderName = sender.replace(/<.+?>/, '').trim();\n    \n    processedItems.push({\n      json: {\n        senderEmail: senderEmail,\n        senderName: senderName || senderEmail,\n        subject: subject,\n        body: cleanBody,\n        timestamp: formattedDate,\n        rawTimestamp: timestamp,\n        processedAt: new Date().toISOString()\n      }\n    });\n    \n  } catch (error) {\n    // Log error but continue processing other items\n    console.error('Error processing email:', error);\n    processedItems.push({\n      json: {\n        error: error.message,\n        originalData: item.json\n      }\n    });\n  }\n}\n\nreturn processedItems;"
+      },
+      "name": "Process Email Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.error}}",
+              "operation": "isEmpty"
+            }
+          ]
+        }
+      },
+      "name": "Check for Errors",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Email Log"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "list",
+          "cachedResultName": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Sender Email": "={{$json.senderEmail}}",
+            "Sender Name": "={{$json.senderName}}",
+            "Subject": "={{$json.subject}}",
+            "Body": "={{$json.body}}",
+            "Received At": "={{$json.timestamp}}",
+            "Processed At": "={{$json.processedAt}}"
+          }
+        },
+        "options": {}
+      },
+      "name": "Append to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [850, 200],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "2",
+          "name": "Google Sheets Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "channel": "C01234567",
+        "text": "=📧 *New Email Received*\n\n*From:* {{$json.senderName}} ({{$json.senderEmail}})\n*Subject:* {{$json.subject}}\n*Time:* {{$json.timestamp}}\n\n*Preview:*\n{{$json.body}}",
+        "attachments": [],
+        "otherOptions": {
+          "mrkdwn": true
+        }
+      },
+      "name": "Send Slack Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [1050, 200],
+      "credentials": {
+        "slackApi": {
+          "id": "3",
+          "name": "Slack Workspace"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "channel": "C01234567",
+        "text": "=⚠️ *Error Processing Email*\n\n*Error:* {{$json.error}}\n*Time:* {{new Date().toISOString()}}\n\nPlease check the workflow logs.",
+        "otherOptions": {
+          "mrkdwn": true
+        }
+      },
+      "name": "Send Error Notification",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [850, 400],
+      "credentials": {
+        "slackApi": {
+          "id": "3",
+          "name": "Slack Workspace"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Process Email Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Email Data": {
+      "main": [
+        [
+          {
+            "node": "Check for Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check for Errors": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Error Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Send Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
